@@ -8,39 +8,61 @@ dotenv.config();
 const app = new Elysia();
 
 const PORT = process.env.PORT || 3000;
-
+const ADMIN_KEY = "$2b$10$19o/W5gaYXwwfP7HtDj7aOpwLCPm5YdVHYkV12lMObc1Fv5ZvjQQu";
 const urlMappings: Record<string, string> = {};
-
 const users: Record<string, string> = {
   user1: process.env.USER1_PASSWORD_HASH || "",
   user2: process.env.USER2_PASSWORD_HASH || "",
 };
 
-const authPlugin = new Elysia()
-  .derive(async ({ request }) => {
-    const authHeader = request.headers.get("authorization");
+const authMiddleware = async ({ request, set }: any) => {
+  const authHeader = request.headers.get("authorization");
 
-    if (authHeader && authHeader.startsWith("Basic ")) {
-      const base64Credentials = authHeader.slice(6);
-      const credentials = Buffer.from(base64Credentials, "base64").toString("utf-8");
-      const [username, password] = credentials.split(":");
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    set.status = 401;
+    return "Unauthorized";
+  }
 
-      const hashedPassword = users[username];
-      if (hashedPassword && (await bcrypt.compare(password, hashedPassword))) {
-        return { isAuthorized: true };
-      }
+  const base64Credentials = authHeader.slice(6);
+  const credentials = Buffer.from(base64Credentials, "base64").toString("utf-8");
+  const [username, password] = credentials.split(":");
+
+  const hashedPassword = users[username];
+  if (!hashedPassword || !(await bcrypt.compare(password, hashedPassword))) {
+    set.status = 401;
+    return "Unauthorized";
+  }
+};
+
+app.post(
+  "/add-user",
+  async ({ body, set, request }) => {
+    const adminKey = request.headers.get("x-admin-key");
+    console.log(ADMIN_KEY);
+    if (adminKey !== ADMIN_KEY) {
+      set.status = 403;
+      return "Forbidden";
     }
 
-    return { isAuthorized: false };
-  })
-  .onBeforeHandle(({ isAuthorized, set }) => {
-    if (!isAuthorized) {
-      set.status = 401;
-      return "Unauthorized";
+    const { username, password } = body;
+    if (!username || !password) {
+      set.status = 400;
+      return "Bad Request: Username and password are required";
     }
-  });
 
-app.use(authPlugin);
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    users[username] = hashedPassword;
+
+    return { message: "Password generated and stored successfully" };
+  },
+  {
+    body: t.Object({
+      username: t.String(),
+      password: t.String(),
+    }),
+  }
+);
 
 app.post(
   "/shorten",
@@ -63,6 +85,7 @@ app.post(
     return { shortUrl: `http://localhost:${PORT}/${shortCode}` };
   },
   {
+    beforeHandle: authMiddleware,
     body: t.Object({
       url: t.String(),
     }),
