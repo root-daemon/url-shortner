@@ -1,5 +1,9 @@
 import { Elysia, t } from "elysia";
 import { nanoid } from "nanoid";
+import bcrypt from "bcrypt";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = new Elysia();
 
@@ -8,12 +12,12 @@ const PORT = process.env.PORT || 3000;
 const urlMappings: Record<string, string> = {};
 
 const users: Record<string, string> = {
-  user1: "password1",
-  user2: "password2",
+  user1: process.env.USER1_PASSWORD_HASH || "",
+  user2: process.env.USER2_PASSWORD_HASH || "",
 };
 
 const authPlugin = new Elysia()
-  .derive(({ request }) => {
+  .derive(async ({ request }) => {
     const authHeader = request.headers.get("authorization");
 
     if (authHeader && authHeader.startsWith("Basic ")) {
@@ -21,7 +25,8 @@ const authPlugin = new Elysia()
       const credentials = Buffer.from(base64Credentials, "base64").toString("utf-8");
       const [username, password] = credentials.split(":");
 
-      if (users[username] === password) {
+      const hashedPassword = users[username];
+      if (hashedPassword && (await bcrypt.compare(password, hashedPassword))) {
         return { isAuthorized: true };
       }
     }
