@@ -1,82 +1,78 @@
-import { Elysia, Context, t } from 'elysia';
-import { nanoid } from 'nanoid';
-import { Buffer } from 'buffer';
+import { Elysia, t } from "elysia";
+import { nanoid } from "nanoid";
 
 const app = new Elysia();
 
 const PORT = process.env.PORT || 3000;
 
-// In-memory storage for URL mappings
 const urlMappings: Record<string, string> = {};
 
-// Simple user authentication data
 const users: Record<string, string> = {
-  user1: 'password1',
-  user2: 'password2',
+  user1: "password1",
+  user2: "password2",
 };
 
-// Authentication Plugin
-const authPlugin = () => ({
-  // Apply authentication only to the '/shorten' route
-  async onRequest(ctx: Context) {
-    if (ctx.request.url === '/shorten') {
-      const authHeader = ctx.request.headers.get('authorization');
+const authPlugin = new Elysia()
+  .derive(({ request }) => {
+    const authHeader = request.headers.get("authorization");
 
-      if (authHeader && authHeader.startsWith('Basic ')) {
-        const base64Credentials = authHeader.slice(6);
-        const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
-        const [username, password] = credentials.split(':');
+    if (authHeader && authHeader.startsWith("Basic ")) {
+      const base64Credentials = authHeader.slice(6);
+      const credentials = Buffer.from(base64Credentials, "base64").toString("utf-8");
+      const [username, password] = credentials.split(":");
 
-        if (users[username] === password) {
-          // Authentication successful
-          return;
-        }
+      if (users[username] === password) {
+        return { isAuthorized: true };
       }
-
-      // Authentication failed
-      return new Response('Unauthorized', { status: 401 });
     }
-  },
-});
 
-app.use(authPlugin());
+    return { isAuthorized: false };
+  })
+  .onBeforeHandle(({ isAuthorized, set }) => {
+    if (!isAuthorized) {
+      set.status = 401;
+      return "Unauthorized";
+    }
+  });
 
-// Route to shorten URL (requires authentication)
+app.use(authPlugin);
+
 app.post(
-  '/shorten',
-  async (ctx: Context) => {
-    let body;
-    try {
-      body = await ctx.request.json();
-    } catch {
-      return new Response('Invalid JSON', { status: 400 });
+  "/shorten",
+  async ({ body, set }) => {
+    if (!body || typeof body !== "object" || !("url" in body)) {
+      set.status = 400;
+      return "Bad Request: Invalid JSON or missing URL";
     }
 
-    const url = body.url;
+    const { url } = body as { url: string };
 
     if (!url) {
-      return new Response('Bad Request: URL is required.', { status: 400 });
+      set.status = 400;
+      return "Bad Request: URL is required.";
     }
 
     const shortCode = nanoid(6);
     urlMappings[shortCode] = url;
 
-    return Response.json({ shortUrl: `http://localhost:${PORT}/${shortCode}` });
+    return { shortUrl: `http://localhost:${PORT}/${shortCode}` };
+  },
+  {
+    body: t.Object({
+      url: t.String(),
+    }),
   }
 );
 
-// Route to redirect
-app.get('/:code', (ctx: Context<{ params: { code: string } }>) => {
-  const code = ctx.params.code;
-  const url = urlMappings[code];
+app.get("/:code", ({ params, set }) => {
+  const url = urlMappings[params.code];
 
   if (url) {
-    return new Response(null, {
-      status: 302,
-      headers: { Location: url },
-    });
+    set.redirect = url;
+    return;
   } else {
-    return new Response('Not Found', { status: 404 });
+    set.status = 404;
+    return "Not Found";
   }
 });
 
